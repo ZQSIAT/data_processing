@@ -1,6 +1,6 @@
 # data_processing
 method for data processing
-# requearment
+# requirements
 python3.6
 
 opencv-python
