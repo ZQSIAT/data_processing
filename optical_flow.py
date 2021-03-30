@@ -1,10 +1,10 @@
-# coding:utf-8
+# -*- coding: utf-8 -*-
 """
 class: videos
 Functions:
 1. video to optical flows
 2. jpgs to video
-
+3. Real-time display of the BGR value and mouse position of the image
 """
 import cv2
 import numpy as np
@@ -95,16 +95,46 @@ class Videos(object):
         return 1
         pass
 
+    @staticmethod
+    def display_value_gray_img(path):
+        img = cv2.imread(path)  # read img
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)  # turn to gray
+
+        def on_mouse(event, x, y, flags, param):  # Standard mouse interaction function
+            if event == cv2.EVENT_LBUTTONDBLCLK:  # mouse click
+                # Display the value of the pixel where the mouse is located
+                # Pay attention ! The difference in pixel representation method and coordinate position
+                print("y=", y, "x=", x, img[y, x], "\n")
+            if event == cv2.EVENT_MOUSEMOVE:  # mouse move
+                print("y=", y, "x=", x, img[y, x], "\n")  #
+            pass
+
+        cv2.namedWindow("img")  # set windows
+        cv2.setMouseCallback("img", on_mouse)
+        while True:  # 无限循环
+            cv2.imshow("img", img)  # 显示图像
+            if cv2.waitKey() == 27:
+                cv2.destroyAllWindows()  # 关闭窗口
+                break
+                pass
+            pass
+        pass
     pass
 
 
 if __name__ == "__main__":
     my_task = Videos()
-    jpg_list = os.listdir(my_task.jpg_path)
-    jpg_list.sort()
-    random = np.random.randint(0, 100, 1)
-
-    out_video_path = my_task.jpg2video(os.path.join(my_task.jpg_path, jpg_list[random[0]]))
-    my_task.video2optical_flow(out_video_path)
+    print('start ...')
+    t1 = time.time()
+    # mouse display_vaule_gray_img
+    img_path = '/Users/zhaoqingsong/Downloads/aachen_000115_000019/aachen_000115_000019_gtFine_labelTrainIds.png'
+    my_task.display_value_gray_img(img_path)
+    t2 = time.time()
+    print('take time:' + str(t2 - t1) + 's' + '\nend.')
+    # jpg_list = os.listdir(my_task.jpg_path)
+    # jpg_list.sort()
+    # random = np.random.randint(0, 100, 1)
+    # out_video_path = my_task.jpg2video(os.path.join(my_task.jpg_path, jpg_list[random[0]]))
+    # my_task.video2optical_flow(out_video_path)
 
     pass

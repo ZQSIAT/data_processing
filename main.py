@@ -8,6 +8,7 @@ import shutil
 from multiprocessing import Pool
 import sys
 import csv
+import random
 
 from pathlib import Path
 
@@ -17,9 +18,13 @@ class DatasetProcess(object):
         self.frame_rate = 10
         self.label_path = "/mnt/zhaoqingsong/data/baidu_data/dataset_output_mark"
         self.save_json_path = "/mnt/zhaoqingsong/data/baidu_data/json_url"
-        self.download_jpg_path = "/mnt/zhaoqingsong/data/baidu_data/down_jpg"
+        self.download_jpg_path = "/mnt/zhaoqingsong/data/baidu_data/good_data"
+        self.baidu_data = "/mnt/zhaoqingsong/data/baidu_data"
         self.bad_seq_path = "/mnt/zhaoqingsong/data/baidu_data/bad_seq"
         self.json_log = "/mnt/zhaoqingsong/data/baidu_data/{:}.json"
+        self.mmcv_polygon_json = '{:}_{:03d}_{:03d}_gtFine_polygons.json'  # aachen_000115_000019_gtFine_polygons.json
+        self.mmcv_labelTrainIds_png = '{:}_{:03d}_{:03d}_gtFine_labelTrainIds.png'  # aachen_000115_000019_gtFine_labelTrainIds.png
+        self.mmcv_leftImg8bit_png = '{:}_{:03d}_{:03d}_leftImg8bit.png'  # lindau_000027_000019_leftImg8bit.png
         pass
 
     def cut_seq(self):
@@ -42,7 +47,7 @@ class DatasetProcess(object):
         pass
 
     def clear_sequence(self):
-        file_list = os.listdir(self.download_jpg_path)
+        file_list = os.listdir(self.bad_seq_path)
         file_list.sort()
         save_json = []
         # cut the file whose sequence not continuous
@@ -50,7 +55,7 @@ class DatasetProcess(object):
             first_file_path = i_con.split('_')[0] + '.json'
             second_file_path = int(i_con.split('_')[1])
             json_file_path = os.path.join(self.save_json_path, first_file_path)
-            temp_file_path = os.path.join(self.download_jpg_path, i_con)
+            # temp_file_path = os.path.join(self.download_jpg_path, i_con)
             temp_json = self.read_json(json_file_path)[second_file_path]
             length_json = len(temp_json)
             temp_question = [True] * (length_json-1)
@@ -73,17 +78,17 @@ class DatasetProcess(object):
                     temp_question[i-1] = False
                 pass
 
-            if False in temp_question:
-                dst_path = self.bad_seq_path
-                try:
-                    shutil.move(temp_file_path, dst_path)
-                    print("\'{:}\' has moved~".format(i_con))
-                    pass
-                except ValueError:
-                    print("\'{:}\' something wrong!!!!".format(i_con))
-                    continue
-                    pass
-                pass
+            # if False in temp_question:
+            #     dst_path = self.bad_seq_path
+            #     try:
+            #         shutil.move(temp_file_path, dst_path)
+            #         print("\'{:}\' has moved~".format(i_con))
+            #         pass
+            #     except ValueError:
+            #         print("\'{:}\' something wrong!!!!".format(i_con))
+            #         continue
+            #         pass
+            #     pass
             pass
         save_json_path = self.json_log.format(time.strftime("%Y_%m_%d_%H_%M_%S", time.localtime()))
         self.store_json(save_json_path, save_json)
@@ -146,6 +151,7 @@ class DatasetProcess(object):
         if not os.path.exists(path):
             os.mkdir(path)
             pass
+        return path
         pass
 
     def read_txt_and_download(self, path):
@@ -258,24 +264,163 @@ class DatasetProcess(object):
                 cv2.fillPoly(img, vertices, color=255)
         cv2.imwrite(str(Path(path, file_name)), img)
 
+    def save_labelTrainIds_and_mmcv_polygons_json(self, ann_path, json, file_name):
+        size = np.array([json['size']['height'], json['size']['width']])
+        img = np.zeros(size)
+        elements = json['elements']
+        for i in range(len(elements)-1, 0, -1):
+            if elements[i]['text'] == '同向区域':
+                point_np = [[int(x['x']), int(x['y'])] for x in elements[i]['points']]
+                # save labelTrainIds.png
+                vertices = np.array([point_np], dtype=np.int32)
+                cv2.fillPoly(img, vertices, color=255)
+                if not os.path.exists(os.path.join(ann_path, file_name[0])):
+                    try:
+                        cv2.imwrite(os.path.join(ann_path, file_name[0]), img)
+                        pass
+                    except ValueError:
+                        print("\'{:}\' save img failed!!!!!!!!!!!!!!!".format(os.path.basename(file_name[0])))
+                        pass
+                    pass
+                # save polygons.json
+                save_dict = {}
+                save_dict.update({"imgHeight": json['size']['height']})
+                save_dict.update({"imgWidth": json['size']['width']})
+                save_dict.update({"objects": [{"label": "road", "polygon": point_np}]})
+                if not os.path.exists(os.path.join(ann_path, file_name[1])):
+                    try:
+                        self.store_json(os.path.join(ann_path, file_name[1]), save_dict)
+                        pass
+                    except ValueError:
+                        print("\'{:}\' save polygons json failed!!!!!!!!!!!!!!!".format(os.path.basename(file_name[1])))
+                        pass
+                    pass
+                break
+                pass
+            pass
+        pass
+
+    def annotation_process(self, label_path, img_path, ann_path):
+        """
+        :param label_path: output mark path '**.txt' files
+        :param img_path: train, test, val img path
+        :param ann_path: train, test, val annotation file path
+        :return: True
+        """
+        file_list = os.listdir(img_path)
+        file_list.sort()
+        split_character = "\t"
+
+        for i_cou, i_con in enumerate(file_list):
+            i_con_ann_path = self.is_path_existed_if_no_mk_it(os.path.join(ann_path, i_con))
+            txt_file = i_con.split('_')[0] + '.txt'
+            line_index = int(i_con.split('_')[1])
+            txt_path = os.path.join(label_path, txt_file)
+            with open(txt_path, encoding='UTF-8') as fb:
+                line = fb.readlines()[line_index+1]
+                f_line = line.strip("\n").split(split_character)
+                assert f_line.__len__() == 3, "{:} label data format error!".format(i_con)
+                result = json.loads(f_line[2])['result']
+                for ii_cou, ii_con in enumerate(result):
+                    save_png = self.mmcv_labelTrainIds_png.format(i_con.split('_')[0], int(i_con.split('_')[1]), ii_cou)
+                    save_json = self.mmcv_polygon_json.format(i_con.split('_')[0], int(i_con.split('_')[1]), ii_cou)
+                    file_name = [save_png, save_json]
+                    self.save_labelTrainIds_and_mmcv_polygons_json(i_con_ann_path, ii_con, file_name)
+                    # exit()
+                    pass
+                pass
+            pass
+        return True
+        pass
+
+    def data_process(self, img_path, img_path2):
+        file_list = os.listdir(img_path)
+        file_list.sort()
+        for i_cou, i_con in enumerate(file_list):
+            dst_file = self.is_path_existed_if_no_mk_it(os.path.join(img_path2, i_con))
+            png_list = os.listdir(os.path.join(img_path, i_con))
+            png_list.sort()
+            # --copy the last frame of gtFine --
+            save_json = self.mmcv_polygon_json.format(i_con.split('_')[0], int(i_con.split('_')[1]), 9)
+            save_png = self.mmcv_labelTrainIds_png.format(i_con.split('_')[0], int(i_con.split('_')[1]), 9)
+            src_json = os.path.join(img_path, i_con, save_json)
+            src_png = os.path.join(img_path, i_con, save_png)
+            dst_json = os.path.join(dst_file, save_json)
+            dst_png = os.path.join(dst_file, save_png)
+            if not os.path.exists(src_json) or not os.path.exists(dst_json):
+                shutil.move(os.path.join(img_path, i_con), os.path.join(self.baidu_data, 'no_annotation', i_con))
+                # shutil.move(os.path.join(img_path2, i_con), os.path.join(self.baidu_data, 'no_annotation', i_con))
+                print("\'{:}\' json and png not exits and moved!!!!!!!!!!!!!!!".format(os.path.basename(save_png)))
+                # exit()
+                continue
+                pass
+            if not os.path.exists(dst_json):
+                try:
+                    shutil.copyfile(src_json, dst_json)
+                    pass
+                except ValueError:
+                    print("\'{:}\' copy last json frame failed!!!!!!!!!!!!!!!".format(os.path.basename(save_png)))
+                    pass
+                pass
+            if not os.path.exists(dst_png):
+                try:
+                    shutil.copyfile(src_png, dst_png)
+                    pass
+                except ValueError:
+                    print("\'{:}\' copy last png frame failed!!!!!!!!!!!!!!!".format(os.path.basename(save_png)))
+                    pass
+                pass
+            # exit()
+            # # --copy the last frame--
+            # save_png = png_list[-1]
+            # src = os.path.join(img_path, i_con, save_png)
+            # dst = os.path.join(dst_file, save_png)
+            # if not os.path.exists(dst):
+            #     try:
+            #         shutil.copyfile(src, dst)
+            #         pass
+            #     except ValueError:
+            #         print("\'{:}\' copy last frame failed!!!!!!!!!!!!!!!".format(os.path.basename(save_png)))
+            #         pass
+            #     pass
+
+
+            # --rename pngs--
+            # for ii_cou, ii_con in enumerate(png_list):
+            #     save_png = self.mmcv_leftImg8bit_png.format(i_con.split('_')[0], int(i_con.split('_')[1]), ii_cou)
+            #     dst = os.path.join(img_path, i_con, save_png)
+            #     src = os.path.join(img_path, i_con, ii_con)
+            #     if not os.path.exists(os.path.join(img_path, save_png)):
+            #         try:
+            #             shutil.move(src, dst)
+            #             pass
+            #         except ValueError:
+            #             print("\'{:}\' move failed!!!!!!!!!!!!!!!".format(os.path.basename(ii_con)))
+            #             pass
+            #     # exit()
+            #     pass
+            # exit()
+            pass
+        pass
+
     def old_data_process(self, PATH):
         txt_list = Path(PATH).iterdir()
         txt_list = [i for i in txt_list]
         print(txt_list)
         for i, txt_path in enumerate(txt_list):
             print('prepare data:' + str(i) + '/' + str(len(txt_list)))
-            txt = self.read_txt(txt_path)
+            txt = self.old_read_txt(txt_path)
             for txt_line in range(len(txt['url'])):
                 if txt_line % 4 != 3:
                     self.get_file(path='./data/list/baidu/img/train', file_name=txt['file_name'][txt_line],
                                   url=txt['url'][txt_line])
-                    self.create_label(path='./data/list/baidu/label/train', json=txt['最终答案'][txt_line],
+                    self.old_create_label(path='./data/list/baidu/label/train', json=txt['最终答案'][txt_line],
                                       file_name=txt['file_name'][txt_line])
 
                 else:
                     self.get_file(path='./data/list/baidu/img/val', file_name=txt['file_name'][txt_line],
                                   url=txt['url'][txt_line])
-                    self.create_label(path='./data/list/baidu/label/val', json=txt['最终答案'][txt_line],
+                    self.old_create_label(path='./data/list/baidu/label/val', json=txt['最终答案'][txt_line],
                                       file_name=txt['file_name'][txt_line])
 
     @staticmethod
@@ -318,11 +463,52 @@ class DatasetProcess(object):
 if __name__ == '__main__':
     my_task = DatasetProcess()
     print('start ...')
-
     t1 = time.time()
+    img_path = '/mnt/zhaoqingsong/data/baidu_data/leftImg8bit/train'  # test, val
+    img_path2 = '/mnt/zhaoqingsong/data/baidu_data/leftImg8bit2/train'  # test, val
+    no_ann_path = '/mnt/zhaoqingsong/data/baidu_data/no_annotation/gtFine/train'  # test, val
+    no_img_path = '/mnt/zhaoqingsong/data/baidu_data/no_annotation/leftImg8bit/test'
+    ann_path = '/mnt/zhaoqingsong/data/baidu_data/gtFine/val'  # test, val
+    # file_list = os.listdir(no_ann_path)
+    # for i_cou, i_con in enumerate(file_list):
+    #     if os.path.exists(os.path.join(img_path2, i_con)):
+    #         shutil.rmtree(os.path.join(img_path2, i_con))
+    #         # shutil.move(os.path.join(img_path, i_con), os.path.join(no_img_path, i_con))
+    #         print("\'{:}\' 2 json and png moved!!!!!!!!!!!!!!!".format(os.path.basename(i_con)))
+    #         continue
+    #     pass
+    # my_task.data_process(img_path, img_path2)
+    # my_task.annotation_process(my_task.label_path, img_path, ann_path)
+
+    # # prepare dataset look like cityscapes
+    # good_file_list = os.listdir(my_task.download_jpg_path)
+    # train_dst = my_task.is_path_existed_if_no_mk_it(os.path.join(my_task.baidu_data, 'train'))
+    # test_dst = my_task.is_path_existed_if_no_mk_it(os.path.join(my_task.baidu_data, 'test'))
+    # val_dst = my_task.is_path_existed_if_no_mk_it(os.path.join(my_task.baidu_data, 'val'))
+    # train_slice = random.sample(good_file_list, 2366)
+    # test_slice = random.sample(list(set(good_file_list) - set(train_slice)), 887)
+    # val_slice = list(set(good_file_list) - set(train_slice) - set(test_slice))
+    # print(len(train_slice), len(test_slice), len(val_slice))
+    # # exit()
+    # for i in good_file_list:
+    #     # move train slice list
+    #     src = os.path.join(my_task.download_jpg_path, i)
+    #     if i in train_slice:
+    #         dst = os.path.join(train_dst, i)
+    #         pass
+    #     else:
+    #         dst = os.path.join(test_dst, i) if i in test_slice else os.path.join(val_dst, i)
+    #         pass
+    #     try:
+    #         shutil.move(src, dst)
+    #         pass
+    #     except IOError:
+    #         print("File not exits!")
+    #         pass
+    #     pass
 
     # clear dataset
-    my_task.clear_sequence()
+    # my_task.clear_sequence()
 
     # _label_path = "/Users/zhaoqingsong/my-pycharm/self_supervised_data_preprocess/dataset_output_mark/"
     # label_list = os.listdir(my_task.label_path)
@@ -340,9 +526,8 @@ if __name__ == '__main__':
     # p.map(my_task.read_txt_and_download,  label_list)
     # p.close()
     # p.join()
-
     t2 = time.time()
-    print('take time:' + str(t2 - t1) + 's' + 'end.')
+    print('take time:' + str(t2 - t1) + 's' + '\nend.')
 
     pass
 
